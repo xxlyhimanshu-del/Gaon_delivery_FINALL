@@ -1,31 +1,14 @@
-GAON GHAR DELIVERY — HIMANSHU EDITION
+GAON GHAR DELIVERY — CODE-ONLY UPDATE (DATABASE NOT INCLUDED)
 
-LOCAL RUN
-1. Folder VS Code me open karo.
-2. Terminal:
-   pip install -r requirements.txt
-   python app.py
-3. Customer: http://127.0.0.1:5000
-4. Admin: http://127.0.0.1:5000/admin/login
-5. Local default admin password: 1234
+IMPORTANT:
+1. Is ZIP me koi .db database file nahi hai.
+2. Existing live products/orders ko overwrite karne ke liye database include nahi kiya gaya.
+3. ZIP extract karke is folder ke files repository folder me paste karo.
+4. Replace All sirf code/templates/static files par lagega.
+5. GitHub Desktop me Commit to main, phir Push origin karo.
+6. Render deploy hone ke baad Admin > App Settings se banner, logo aur developer photo upload karo.
 
-PUBLIC DEPLOY SE PEHLE
-- SECRET_KEY aur ADMIN_PASSWORD environment variables zaroor set karo.
-- Public deployment par default password 1234 mat rakho.
-- Uploaded photos aur SQLite database ko persistent storage chahiye; warna hosting restart/redeploy par data reset ho sakta hai.
-
-FEATURES
-- Premium mobile UI
-- Splash: Developed by Himanshu
-- Search + categories
-- Quantity +/- cart
-- 10% delivery charge
-- Order tracking
-- PWA install support
-- Admin order dashboard + sales stats
-- Product photo/category management
-- Production Gunicorn config
-- Health check: /health
-
-DEVELOPER PHOTO
-Apni photo ko static/developer.jpg naam se add karke footer/avatar template me image tag laga sakte ho. Abhi safe placeholder "H" diya hai.
+DATA SAFETY:
+- Existing database file ko manually delete mat karna.
+- Agar Render free ephemeral storage use kar raha hai, future deploy/restart par uploaded data reset ho sakta hai.
+- Permanent data ke liye Render Persistent Disk ya external database zaroori hai.

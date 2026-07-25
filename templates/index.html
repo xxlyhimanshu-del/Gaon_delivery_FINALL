@@ -1,12 +1,12 @@
 {% extends "base.html" %}{% block title %}Gaon Ghar Delivery{% endblock %}
 {% block content %}
-<div id="splash"><div class="splash-ring"><div class="splash-logo">🏡</div></div><h1>Gaon Ghar Delivery</h1><p>Developed by <b>Himanshu</b></p><div class="loader"><i></i></div></div>
+<div id="splash"><div class="splash-ring"><div class="splash-logo">🏡</div></div><h1>{{ settings.shop_name }}</h1><div class="splash-credit">{% if settings.developer_photo %}<img src="{{ url_for('static',filename='uploads/'+settings.developer_photo) }}" alt="{{ settings.developer_name }}">{% endif %}<p>Developed by <b>{{ settings.developer_name }}</b></p></div><div class="loader"><i></i></div></div>
 
-<header class="hero">
+<header class="hero"{% if settings.banner_image %} style="background-image:linear-gradient(125deg,rgba(7,91,50,.92),rgba(11,135,73,.88)),url('{{ url_for('static',filename='uploads/'+settings.banner_image) }}');background-size:cover;background-position:center"{% endif %}>
   <div class="hero-copy">
-    <div class="hero-badge">⚡ 30–45 min local delivery</div>
-    <h1>Gaon ki dukaan,<br><span>ab aapke phone par.</span></h1>
-    <p>Kirana, dairy, snacks aur daily needs — sab ghar baithe order karein.</p>
+    <div class="hero-badge">⚡ {{ settings.delivery_minutes }} min local delivery</div>
+    <h1>{{ settings.hero_title }}</h1>
+    <p>{{ settings.hero_subtitle }}</p>
     <div class="hero-actions"><a class="button light" href="#shop">Order Now</a><a class="button glass" href="{{ url_for('track_order') }}">Track Order</a></div>
     <div class="trust-row"><span>✓ Easy ordering</span><span>✓ Cash on delivery</span><span>✓ Local support</span></div>
   </div>
@@ -40,15 +40,15 @@
 <section class="products" id="products">
 {% for product in products %}
 <article class="product-card" data-search="{{ product.name|lower }} {{ product.shop_name|lower }}" data-category="{{ product.category|lower }}">
-  <div class="image-wrap">{% if product.image_url %}<img class="product-image" src="{{ url_for('static', filename='uploads/' + product.image_url) }}" alt="{{ product.name }}" loading="lazy">{% else %}<div class="placeholder"><span>🛍️</span></div>{% endif %}<span class="category-tag">{{ product.category }}</span><span class="rating">★ 4.8</span></div>
-  <div class="product-info"><p class="shop">{{ product.shop_name }}</p><h3>{{ product.name }}</h3><p class="delivery-note">⏱ 30–45 min delivery</p><div class="product-bottom"><div><span class="price">₹{{ product.price }}</span><small class="unit"> incl. taxes</small></div><div class="stepper"><button type="button" class="minus" aria-label="Ghatao">−</button><input class="quantity" type="number" name="quantity_{{ product.id }}" value="0" min="0" max="20" data-price="{{ product.price }}" readonly><button type="button" class="plus" aria-label="Badhao">+</button></div></div></div>
+  <div class="image-wrap">{% if product.image_url %}<img class="product-image" src="{{ url_for('static', filename='uploads/' + product.image_url) }}" alt="{{ product.name }}" loading="lazy">{% else %}<div class="placeholder"><span>🛍️</span></div>{% endif %}<span class="category-tag">{{ product.category }}</span>{% if product.is_featured %}<span class="featured-tag">⭐ Featured</span>{% endif %}<span class="rating">★ 4.8</span></div>
+  <div class="product-info"><p class="shop">{{ product.shop_name }}</p><h3>{{ product.name }}</h3><p class="delivery-note">⏱ {{ settings.delivery_minutes }} min delivery</p><div class="product-bottom"><div><span class="price">₹{{ product.price }}</span><small class="unit">Stock {{ product.stock }}</small></div><div class="stepper"><button type="button" class="minus" aria-label="Ghatao">−</button><input class="quantity" type="number" name="quantity_{{ product.id }}" value="0" min="0" max="{{ [20, product.stock]|min }}" data-max="{{ [20, product.stock]|min }}" data-price="{{ product.price }}" readonly><button type="button" class="plus" aria-label="Badhao">+</button></div></div></div>
 </article>{% endfor %}
 </section>
 <div id="empty-state" class="empty-state" hidden><span>🔍</span><h3>Koi product nahi mila</h3><p>Search ya category badal kar dekhein.</p></div>
 
 <section class="checkout-grid">
   <div class="card delivery-card"><div class="card-title-icon">📍</div><div><span class="eyebrow">DELIVERY DETAILS</span><h2>Order kahan bhejna hai?</h2></div><div class="form-grid"><label>Naam<input type="text" name="customer_name" maxlength="80" autocomplete="name" placeholder="Apna naam" required></label><label>Mobile<input type="tel" name="phone" inputmode="numeric" pattern="[0-9]{10}" maxlength="10" autocomplete="tel" placeholder="10-digit number" required></label></div><label>Poora address<textarea name="address" rows="4" maxlength="500" autocomplete="street-address" placeholder="House no., gali, landmark, gaon" required></textarea></label></div>
-  <aside class="card bill"><div class="bill-head"><div><small>YOUR CART</small><h2>Bill Details</h2></div><span>🧾</span></div><div><span>Item total</span><b>₹<span id="subtotal">0</span></b></div><div><span>Delivery fee ({{ delivery_rate }}%)</span><b>₹<span id="delivery-fee">0</span></b></div><div class="saving"><span>Local delivery benefit</span><b>✓ Included</b></div><hr><div class="grand"><span>To Pay</span><b>₹<span id="grand-total">0</span></b></div><button class="full order-btn" type="submit">Place Order <span>→</span></button><small>Cash on delivery available • Secure ordering</small></aside>
+  <aside class="card bill"><div class="bill-head"><div><small>YOUR CART</small><h2>Bill Details</h2></div><span>🧾</span></div><div><span>Item total</span><b>₹<span id="subtotal">0</span></b></div><div><span>Delivery fee ({% if settings.delivery_type=='percent' %}{{ settings.delivery_value }}%{% else %}fixed{% endif %})</span><b>₹<span id="delivery-fee">0</span></b></div><div class="saving"><span>Local delivery benefit</span><b>✓ Included</b></div><hr><div class="grand"><span>To Pay</span><b>₹<span id="grand-total">0</span></b></div><button class="full order-btn" type="submit">Place Order <span>→</span></button><small>{% if settings.cash_on_delivery=='1' %}Cash on delivery available • {% endif %}Secure ordering</small></aside>
 </section>
 <div class="cart-bar" id="cart-bar"><div><b><span id="cart-count">0</span> items</b><small>₹<span id="mobile-total">0</span> total</small></div><button type="button" onclick="document.querySelector('.checkout-grid').scrollIntoView({behavior:'smooth'})">View Cart →</button></div>
 </form></main>
@@ -56,8 +56,8 @@
 {% block scripts %}<script>
 const splash=document.getElementById('splash'); setTimeout(()=>splash.classList.add('hide'),1100);
 const inputs=[...document.querySelectorAll('.quantity')];
-function update(){let sub=0,count=0;inputs.forEach(i=>{const q=Number(i.value)||0;sub+=q*Number(i.dataset.price);count+=q});const fee=sub?Math.max(1,Math.round(sub*{{ delivery_rate }}/100)):0,total=sub+fee;document.getElementById('subtotal').textContent=sub;document.getElementById('delivery-fee').textContent=fee;document.getElementById('grand-total').textContent=total;document.getElementById('mobile-total').textContent=total;document.getElementById('cart-count').textContent=count;document.getElementById('cart-bar').classList.toggle('show',count>0)}
-document.querySelectorAll('.stepper').forEach(s=>{const i=s.querySelector('input');s.querySelector('.plus').onclick=()=>{i.value=Math.min(20,Number(i.value)+1);s.classList.add('active');update()};s.querySelector('.minus').onclick=()=>{i.value=Math.max(0,Number(i.value)-1);if(Number(i.value)===0)s.classList.remove('active');update()}});
+function update(){let sub=0,count=0;inputs.forEach(i=>{const q=Number(i.value)||0;sub+=q*Number(i.dataset.price);count+=q});const fee=sub?Math.max({{ settings.minimum_delivery_fee|int }},{% if settings.delivery_type=='percent' %}Math.round(sub*{{ settings.delivery_value|float }}/100){% else %}Math.round({{ settings.delivery_value|float }}){% endif %}):0,total=sub+fee;document.getElementById('subtotal').textContent=sub;document.getElementById('delivery-fee').textContent=fee;document.getElementById('grand-total').textContent=total;document.getElementById('mobile-total').textContent=total;document.getElementById('cart-count').textContent=count;document.getElementById('cart-bar').classList.toggle('show',count>0)}
+document.querySelectorAll('.stepper').forEach(s=>{const i=s.querySelector('input');s.querySelector('.plus').onclick=()=>{i.value=Math.min(Number(i.dataset.max),Number(i.value)+1);s.classList.add('active');update()};s.querySelector('.minus').onclick=()=>{i.value=Math.max(0,Number(i.value)-1);if(Number(i.value)===0)s.classList.remove('active');update()}});
 function filter(){const text=document.getElementById('search').value.toLowerCase().trim(),cat=document.querySelector('.chip.active').dataset.category;let visible=0;document.querySelectorAll('.product-card').forEach(c=>{const show=c.dataset.search.includes(text)&&(cat==='all'||c.dataset.category===cat);c.hidden=!show;if(show)visible++});document.getElementById('empty-state').hidden=visible!==0}
 document.getElementById('search').addEventListener('input',filter);document.querySelectorAll('.chip').forEach(c=>c.onclick=()=>{document.querySelector('.chip.active').classList.remove('active');c.classList.add('active');filter()});
 document.getElementById('order-form').addEventListener('submit',e=>{if(Number(document.getElementById('cart-count').textContent)===0){e.preventDefault();alert('Pehle koi product cart me add karo.')}});

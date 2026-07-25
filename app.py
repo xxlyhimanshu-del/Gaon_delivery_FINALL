@@ -6,14 +6,13 @@ from functools import wraps
 from pathlib import Path
 from uuid import uuid4
 
-from flask import Flask, flash, jsonify, redirect, render_template, request, session, url_for
+from flask import Flask, flash, jsonify, redirect, render_template, request, send_file, session, url_for
 from werkzeug.utils import secure_filename
 
 BASE_DIR = Path(__file__).resolve().parent
 DATABASE = Path(os.environ.get("DATABASE_PATH", BASE_DIR / "gaon_delivery.db"))
 UPLOAD_FOLDER = BASE_DIR / "static" / "uploads"
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "webp"}
-DELIVERY_RATE = 0.10
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "change-this-before-public-deploy")
@@ -24,6 +23,28 @@ app.config.update(
     SESSION_COOKIE_SAMESITE="Lax",
 )
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "1234")
+
+DEFAULT_SETTINGS = {
+    "shop_name": "Gaon Ghar Delivery",
+    "short_name": "Gaon Ghar",
+    "location_name": "Apna Gaon",
+    "hero_title": "Gaon ki dukaan, ab aapke phone par.",
+    "hero_subtitle": "Kirana, dairy, snacks aur daily needs — sab ghar baithe order karein.",
+    "delivery_minutes": "30–45",
+    "delivery_type": "percent",
+    "delivery_value": "10",
+    "minimum_delivery_fee": "1",
+    "upi_id": "",
+    "support_phone": "",
+    "announcement": "",
+    "logo_image": "",
+    "banner_image": "",
+    "qr_image": "",
+    "cash_on_delivery": "1",
+    "orders_enabled": "1",
+    "developer_name": "Himanshu",
+    "developer_photo": "",
+}
 
 
 def get_database():
@@ -49,16 +70,21 @@ def create_database():
             shop_name TEXT NOT NULL,
             category TEXT NOT NULL DEFAULT 'Kirana',
             image_url TEXT DEFAULT '',
-            is_available INTEGER NOT NULL DEFAULT 1
+            is_available INTEGER NOT NULL DEFAULT 1,
+            stock INTEGER NOT NULL DEFAULT 100,
+            is_featured INTEGER NOT NULL DEFAULT 0
         )
     """)
     columns = column_names(connection, "products")
-    if "image_url" not in columns:
-        connection.execute("ALTER TABLE products ADD COLUMN image_url TEXT DEFAULT ''")
-    if "is_available" not in columns:
-        connection.execute("ALTER TABLE products ADD COLUMN is_available INTEGER NOT NULL DEFAULT 1")
-    if "category" not in columns:
-        connection.execute("ALTER TABLE products ADD COLUMN category TEXT NOT NULL DEFAULT 'Kirana'")
+    for name, definition in {
+        "image_url": "TEXT DEFAULT ''",
+        "is_available": "INTEGER NOT NULL DEFAULT 1",
+        "category": "TEXT NOT NULL DEFAULT 'Kirana'",
+        "stock": "INTEGER NOT NULL DEFAULT 100",
+        "is_featured": "INTEGER NOT NULL DEFAULT 0",
+    }.items():
+        if name not in columns:
+            connection.execute(f"ALTER TABLE products ADD COLUMN {name} {definition}")
 
     connection.execute("""
         CREATE TABLE IF NOT EXISTS orders (
@@ -80,20 +106,39 @@ def create_database():
     if "delivery_fee" not in order_columns:
         connection.execute("ALTER TABLE orders ADD COLUMN delivery_fee INTEGER NOT NULL DEFAULT 0")
 
+    connection.execute("""
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL DEFAULT ''
+        )
+    """)
+    for key, value in DEFAULT_SETTINGS.items():
+        connection.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, value))
+
     count = connection.execute("SELECT COUNT(*) AS total FROM products").fetchone()["total"]
     if count == 0:
         connection.executemany(
-            "INSERT INTO products (name, price, shop_name, category) VALUES (?, ?, ?, ?)",
+            "INSERT INTO products (name, price, shop_name, category, stock, is_featured) VALUES (?, ?, ?, ?, ?, ?)",
             [
-                ("Aata 5 KG", 220, "Gaon Kirana Store", "Kirana"),
-                ("Chawal 5 KG", 300, "Gaon Kirana Store", "Kirana"),
-                ("Cheeni 1 KG", 50, "Gaon Kirana Store", "Kirana"),
-                ("Doodh 1 Litre", 65, "Dairy Shop", "Dairy"),
-                ("Biscuit Packet", 20, "Gaon Kirana Store", "Snacks"),
+                ("Aata 5 KG", 220, "Gaon Kirana Store", "Kirana", 20, 1),
+                ("Chawal 5 KG", 300, "Gaon Kirana Store", "Kirana", 20, 1),
+                ("Cheeni 1 KG", 50, "Gaon Kirana Store", "Kirana", 30, 0),
+                ("Doodh 1 Litre", 65, "Dairy Shop", "Dairy", 15, 1),
+                ("Biscuit Packet", 20, "Gaon Kirana Store", "Snacks", 50, 0),
             ],
         )
     connection.commit()
     connection.close()
+
+
+def get_settings(connection=None):
+    own = connection is None
+    connection = connection or get_database()
+    values = DEFAULT_SETTINGS.copy()
+    values.update({row["key"]: row["value"] for row in connection.execute("SELECT key, value FROM settings")})
+    if own:
+        connection.close()
+    return values
 
 
 def admin_required(function):
@@ -119,21 +164,35 @@ def save_image(uploaded_file):
     return new_filename
 
 
+def delivery_fee_for(subtotal, settings):
+    try:
+        value = max(0, float(settings.get("delivery_value", "10")))
+        minimum = max(0, int(float(settings.get("minimum_delivery_fee", "1"))))
+    except ValueError:
+        value, minimum = 10, 1
+    if subtotal <= 0:
+        return 0
+    fee = round(subtotal * value / 100) if settings.get("delivery_type") == "percent" else round(value)
+    return max(minimum, fee)
+
+
 @app.context_processor
 def inject_globals():
-    return {"delivery_rate": int(DELIVERY_RATE * 100)}
+    settings = get_settings()
+    return {"site_settings": settings}
 
 
 @app.route("/")
 def home():
     connection = get_database()
+    settings = get_settings(connection)
     products = connection.execute("""
-        SELECT * FROM products WHERE is_available = 1
-        ORDER BY category, shop_name, name
+        SELECT * FROM products WHERE is_available = 1 AND stock > 0
+        ORDER BY is_featured DESC, category, shop_name, name
     """).fetchall()
     categories = sorted({row["category"] for row in products})
     connection.close()
-    return render_template("index.html", products=products, categories=categories)
+    return render_template("index.html", products=products, categories=categories, settings=settings)
 
 
 @app.route("/place-order", methods=["POST"])
@@ -149,20 +208,28 @@ def place_order():
         return redirect(url_for("home"))
 
     connection = get_database()
-    products = connection.execute("SELECT * FROM products WHERE is_available = 1").fetchall()
+    settings = get_settings(connection)
+    if settings.get("orders_enabled") != "1":
+        connection.close()
+        flash("Abhi naye orders temporarily band hain.", "error")
+        return redirect(url_for("home"))
+
+    products = connection.execute("SELECT * FROM products WHERE is_available = 1 AND stock > 0").fetchall()
     selected_items, subtotal = [], 0
+    stock_updates = []
     for product in products:
         try:
             quantity = int(request.form.get(f"quantity_{product['id']}", "0"))
         except (TypeError, ValueError):
             quantity = 0
-        quantity = max(0, min(quantity, 20))
+        quantity = max(0, min(quantity, 20, product["stock"]))
         if quantity:
             item_subtotal = product["price"] * quantity
             selected_items.append({
-                "name": product["name"], "shop_name": product["shop_name"],
+                "product_id": product["id"], "name": product["name"], "shop_name": product["shop_name"],
                 "price": product["price"], "quantity": quantity, "subtotal": item_subtotal,
             })
+            stock_updates.append((quantity, product["id"]))
             subtotal += item_subtotal
 
     if not selected_items:
@@ -170,7 +237,7 @@ def place_order():
         flash("Pehle cart me koi product add karo.", "error")
         return redirect(url_for("home"))
 
-    delivery_fee = max(1, round(subtotal * DELIVERY_RATE))
+    delivery_fee = delivery_fee_for(subtotal, settings)
     total = subtotal + delivery_fee
     cursor = connection.execute("""
         INSERT INTO orders
@@ -180,11 +247,13 @@ def place_order():
         customer_name, phone, address, json.dumps(selected_items, ensure_ascii=False),
         subtotal, delivery_fee, total, datetime.now().strftime("%d-%m-%Y %I:%M %p"),
     ))
+    for quantity, product_id in stock_updates:
+        connection.execute("UPDATE products SET stock = MAX(0, stock - ?) WHERE id = ?", (quantity, product_id))
     connection.commit()
     order_id = cursor.lastrowid
     connection.close()
     return render_template("success.html", order_id=order_id, subtotal=subtotal,
-                           delivery_fee=delivery_fee, total=total, phone=phone)
+                           delivery_fee=delivery_fee, total=total, phone=phone, settings=settings)
 
 
 @app.route("/track", methods=["GET", "POST"])
@@ -198,9 +267,7 @@ def track_order():
             error = "Order number aur mobile number sahi bharo."
         else:
             connection = get_database()
-            row = connection.execute(
-                "SELECT * FROM orders WHERE id = ? AND phone = ?", (int(order_id), phone)
-            ).fetchone()
+            row = connection.execute("SELECT * FROM orders WHERE id = ? AND phone = ?", (int(order_id), phone)).fetchone()
             connection.close()
             if row:
                 order = dict(row)
@@ -208,13 +275,8 @@ def track_order():
                     order["items_list"] = json.loads(order["items"])
                 except (TypeError, json.JSONDecodeError):
                     order["items_list"] = []
-
-                progress_steps = ["Pending", "Accepted", "Out for Delivery", "Delivered"]
-                order["progress_index"] = (
-                    progress_steps.index(order["status"])
-                    if order["status"] in progress_steps
-                    else -1
-                )
+                steps = ["Pending", "Accepted", "Out for Delivery", "Delivered"]
+                order["progress_index"] = steps.index(order["status"]) if order["status"] in steps else -1
             else:
                 error = "Is order number aur mobile se koi order nahi mila."
     return render_template("track.html", order=order, error=error)
@@ -251,9 +313,11 @@ def admin():
     stats = connection.execute("""
         SELECT COUNT(*) AS total_orders,
         COALESCE(SUM(CASE WHEN status='Delivered' THEN total ELSE 0 END),0) AS delivered_sales,
-        SUM(CASE WHEN status='Pending' THEN 1 ELSE 0 END) AS pending_orders
+        SUM(CASE WHEN status='Pending' THEN 1 ELSE 0 END) AS pending_orders,
+        SUM(CASE WHEN status='Delivered' THEN 1 ELSE 0 END) AS delivered_orders
         FROM orders
     """).fetchone()
+    low_stock = connection.execute("SELECT COUNT(*) AS total FROM products WHERE stock <= 5").fetchone()["total"]
     connection.close()
     orders = []
     for row in rows:
@@ -264,7 +328,7 @@ def admin():
             order["items_list"] = []
         orders.append(order)
     statuses = ["Pending", "Accepted", "Out for Delivery", "Delivered", "Cancelled"]
-    return render_template("admin.html", orders=orders, statuses=statuses, stats=stats)
+    return render_template("admin.html", orders=orders, statuses=statuses, stats=stats, low_stock=low_stock)
 
 
 @app.route("/update-status/<int:order_id>", methods=["POST"])
@@ -281,13 +345,24 @@ def update_status(order_id):
     return redirect(url_for("admin"))
 
 
+@app.route("/admin/orders/delete/<int:order_id>", methods=["POST"])
+@admin_required
+def delete_order(order_id):
+    connection = get_database()
+    connection.execute("DELETE FROM orders WHERE id = ?", (order_id,))
+    connection.commit(); connection.close()
+    flash(f"Order #{order_id} delete ho gaya.", "success")
+    return redirect(url_for("admin"))
+
+
 @app.route("/admin/products")
 @admin_required
 def admin_products():
     connection = get_database()
     products = connection.execute("SELECT * FROM products ORDER BY id DESC").fetchall()
+    categories = [row["category"] for row in connection.execute("SELECT DISTINCT category FROM products ORDER BY category")]
     connection.close()
-    return render_template("products.html", products=products)
+    return render_template("products.html", products=products, categories=categories)
 
 
 @app.route("/admin/products/add", methods=["POST"])
@@ -296,18 +371,22 @@ def add_product():
     name = request.form.get("name", "").strip()[:100]
     shop_name = request.form.get("shop_name", "").strip()[:100]
     category = request.form.get("category", "Kirana").strip()[:50] or "Kirana"
-    try: price = int(request.form.get("price", "0"))
-    except ValueError: price = 0
+    try:
+        price = int(request.form.get("price", "0")); stock = max(0, int(request.form.get("stock", "0")))
+    except ValueError:
+        price, stock = 0, 0
     if not name or not shop_name or price <= 0:
         flash("Product naam, shop aur sahi price bharo.", "error")
         return redirect(url_for("admin_products"))
-    try: image_filename = save_image(request.files.get("image"))
+    try:
+        image_filename = save_image(request.files.get("image"))
     except ValueError as error:
         flash(str(error), "error"); return redirect(url_for("admin_products"))
     connection = get_database()
     connection.execute("""INSERT INTO products
-        (name, price, shop_name, category, image_url, is_available) VALUES (?, ?, ?, ?, ?, 1)
-    """, (name, price, shop_name, category, image_filename))
+        (name, price, shop_name, category, image_url, is_available, stock, is_featured)
+        VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+    """, (name, price, shop_name, category, image_filename, stock, 1 if request.form.get("is_featured") else 0))
     connection.commit(); connection.close()
     flash("Product successfully add ho gaya.", "success")
     return redirect(url_for("admin_products"))
@@ -324,18 +403,26 @@ def edit_product(product_id):
         name = request.form.get("name", "").strip()[:100]
         shop_name = request.form.get("shop_name", "").strip()[:100]
         category = request.form.get("category", "Kirana").strip()[:50] or "Kirana"
-        try: price = int(request.form.get("price", "0"))
-        except ValueError: price = 0
+        try:
+            price = int(request.form.get("price", "0")); stock = max(0, int(request.form.get("stock", "0")))
+        except ValueError:
+            price, stock = 0, 0
         if not name or not shop_name or price <= 0:
             connection.close(); flash("Product details sahi bharo.", "error"); return redirect(request.url)
         image_filename = product["image_url"] or ""
         uploaded_file = request.files.get("image")
         if uploaded_file and uploaded_file.filename:
-            try: image_filename = save_image(uploaded_file)
+            try:
+                new_image = save_image(uploaded_file)
+                if image_filename:
+                    (UPLOAD_FOLDER / image_filename).unlink(missing_ok=True)
+                image_filename = new_image
             except ValueError as error:
                 connection.close(); flash(str(error), "error"); return redirect(request.url)
-        connection.execute("""UPDATE products SET name=?, price=?, shop_name=?, category=?, image_url=? WHERE id=?""",
-                           (name, price, shop_name, category, image_filename, product_id))
+        connection.execute("""UPDATE products SET name=?, price=?, shop_name=?, category=?, image_url=?,
+                           stock=?, is_featured=? WHERE id=?""",
+                           (name, price, shop_name, category, image_filename, stock,
+                            1 if request.form.get("is_featured") else 0, product_id))
         connection.commit(); connection.close()
         flash("Product update ho gaya.", "success")
         return redirect(url_for("admin_products"))
@@ -364,6 +451,45 @@ def delete_product(product_id):
         except OSError: pass
     flash("Product delete ho gaya.", "success")
     return redirect(url_for("admin_products"))
+
+
+@app.route("/admin/settings", methods=["GET", "POST"])
+@admin_required
+def admin_settings():
+    connection = get_database()
+    settings = get_settings(connection)
+    if request.method == "POST":
+        editable = ["shop_name", "short_name", "location_name", "hero_title", "hero_subtitle",
+                    "delivery_minutes", "delivery_type", "delivery_value", "minimum_delivery_fee",
+                    "upi_id", "support_phone", "announcement", "developer_name"]
+        for key in editable:
+            value = request.form.get(key, "").strip()[:500]
+            connection.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
+        for key in ["cash_on_delivery", "orders_enabled"]:
+            connection.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+                               (key, "1" if request.form.get(key) else "0"))
+        for field, key in [("logo_image", "logo_image"), ("banner_image", "banner_image"), ("qr_image", "qr_image"), ("developer_photo", "developer_photo")]:
+            uploaded = request.files.get(field)
+            if uploaded and uploaded.filename:
+                try:
+                    new_name = save_image(uploaded)
+                    old = settings.get(key, "")
+                    if old:
+                        (UPLOAD_FOLDER / old).unlink(missing_ok=True)
+                    connection.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, new_name))
+                except ValueError as error:
+                    connection.close(); flash(str(error), "error"); return redirect(request.url)
+        connection.commit(); connection.close()
+        flash("App settings save ho gayi.", "success")
+        return redirect(url_for("admin_settings"))
+    connection.close()
+    return render_template("settings.html", settings=settings)
+
+
+@app.route("/admin/backup")
+@admin_required
+def download_backup():
+    return send_file(DATABASE, as_attachment=True, download_name=f"gaon-delivery-backup-{datetime.now():%Y-%m-%d}.db")
 
 
 create_database()
