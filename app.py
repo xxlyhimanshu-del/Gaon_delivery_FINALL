@@ -148,6 +148,33 @@ def create_database():
             value TEXT NOT NULL DEFAULT ''
         )
     """)
+
+    # Upgrade older SQLite databases without deleting existing products/orders.
+    # CREATE TABLE IF NOT EXISTS does not add newly introduced columns, so we
+    # add them safely one by one during every startup.
+    if not connection.is_postgres:
+        product_columns = {row[1] for row in connection.execute("PRAGMA table_info(products)").fetchall()}
+        product_migrations = {
+            "category": "TEXT NOT NULL DEFAULT 'Kirana'",
+            "is_available": "INTEGER NOT NULL DEFAULT 1",
+            "stock": "INTEGER NOT NULL DEFAULT 100",
+            "is_featured": "INTEGER NOT NULL DEFAULT 0",
+        }
+        for column, definition in product_migrations.items():
+            if column not in product_columns:
+                connection.execute(f"ALTER TABLE products ADD COLUMN {column} {definition}")
+
+        order_columns = {row[1] for row in connection.execute("PRAGMA table_info(orders)").fetchall()}
+        order_migrations = {
+            "subtotal": "INTEGER NOT NULL DEFAULT 0",
+            "delivery_fee": "INTEGER NOT NULL DEFAULT 0",
+        }
+        for column, definition in order_migrations.items():
+            if column not in order_columns:
+                connection.execute(f"ALTER TABLE orders ADD COLUMN {column} {definition}")
+
+        # Old orders only had total; preserve them by using total as subtotal.
+        connection.execute("UPDATE orders SET subtotal = total WHERE subtotal = 0 AND total > 0")
     for key, value in DEFAULT_SETTINGS.items():
         if connection.is_postgres:
             connection.execute(
