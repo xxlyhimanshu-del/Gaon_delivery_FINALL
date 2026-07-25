@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Track Order{% endblock %}
+{% block content %}
+<main class="container narrow top-space">
+  <section class="card">
+    <span class="eyebrow">LIVE ORDER STATUS</span>
+    <h1>Order track karein</h1>
+    <form method="POST">
+      <label>Order number
+        <input name="order_id" inputmode="numeric" placeholder="Jaise 12" required>
+      </label>
+      <label>Mobile number
+        <input name="phone" inputmode="numeric" pattern="[0-9]{10}" maxlength="10" required>
+      </label>
+      <button class="full">Track Order</button>
+    </form>
+    {% if error %}<div class="message error">{{ error }}</div>{% endif %}
+  </section>
+
+  {% if order %}
+  <section class="card track-result">
+    <div class="status-pill">{{ order.status }}</div>
+    <h2>Order #{{ order.id }}</h2>
+    <p>{{ order.created_at }}</p>
+
+    {% if order.status == 'Cancelled' %}
+      <div class="message error">Yeh order cancel ho chuka hai.</div>
+    {% else %}
+      <div class="timeline">
+        {% set steps = ['Pending', 'Accepted', 'Out for Delivery', 'Delivered'] %}
+        {% for step in steps %}
+          <div class="timeline-step {% if loop.index0 <= order.progress_index %}done{% endif %}">
+            <i></i><span>{{ step }}</span>
+          </div>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    <ul class="order-items">
+      {% for item in order.items_list %}
+        <li><span>{{ item.name }} × {{ item.quantity }}</span><b>₹{{ item.subtotal }}</b></li>
+      {% endfor %}
+    </ul>
+    <div class="bill mini"><div class="grand"><span>Total</span><b>₹{{ order.total }}</b></div></div>
+  </section>
+  {% endif %}
+</main>
+{% endblock %}
