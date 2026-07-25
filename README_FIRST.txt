@@ -1,14 +1,22 @@
-GAON GHAR DELIVERY — CODE-ONLY UPDATE (DATABASE NOT INCLUDED)
+GAON GHAR DELIVERY — PERMANENT POSTGRESQL VERSION
 
-IMPORTANT:
-1. Is ZIP me koi .db database file nahi hai.
-2. Existing live products/orders ko overwrite karne ke liye database include nahi kiya gaya.
-3. ZIP extract karke is folder ke files repository folder me paste karo.
-4. Replace All sirf code/templates/static files par lagega.
-5. GitHub Desktop me Commit to main, phir Push origin karo.
-6. Render deploy hone ke baad Admin > App Settings se banner, logo aur developer photo upload karo.
+WHAT IS PERMANENT NOW
+- Products, orders, settings, logo, banner, QR and developer photo are stored in PostgreSQL.
+- GitHub push, Render deploy, restart or sleep/wake will not reset this data.
+- Uploaded images are stored inside the database as data URLs, so Render's temporary file storage is not used.
 
-DATA SAFETY:
-- Existing database file ko manually delete mat karna.
-- Agar Render free ephemeral storage use kar raha hai, future deploy/restart par uploaded data reset ho sakta hai.
-- Permanent data ke liye Render Persistent Disk ya external database zaroori hai.
+RENDER SETUP
+1. Render Dashboard > New > PostgreSQL.
+2. Create a database. Note: Render Free Postgres expires after 30 days; use a paid Postgres plan for truly long-term storage.
+3. Open the database > Connect and copy its Internal Database URL.
+4. Open your Web Service > Environment > Add Environment Variable.
+5. Key: DATABASE_URL
+6. Value: paste the Internal Database URL.
+7. Also set SECRET_KEY and ADMIN_PASSWORD.
+8. Save changes and redeploy.
+
+IMPORTANT
+- Do not set DATABASE_PATH on Render when DATABASE_URL is configured.
+- The app automatically creates tables and starter products on a new empty PostgreSQL database.
+- Admin backup now downloads a JSON backup instead of a SQLite .db file.
+- Old deleted Render SQLite products cannot be recovered unless you have an earlier backup.

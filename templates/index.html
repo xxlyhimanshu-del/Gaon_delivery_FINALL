@@ -1,8 +1,8 @@
 {% extends "base.html" %}{% block title %}Gaon Ghar Delivery{% endblock %}
 {% block content %}
-<div id="splash"><div class="splash-ring"><div class="splash-logo">🏡</div></div><h1>{{ settings.shop_name }}</h1><div class="splash-credit">{% if settings.developer_photo %}<img src="{{ url_for('static',filename='uploads/'+settings.developer_photo) }}" alt="{{ settings.developer_name }}">{% endif %}<p>Developed by <b>{{ settings.developer_name }}</b></p></div><div class="loader"><i></i></div></div>
+<div id="splash"><div class="splash-ring"><div class="splash-logo">🏡</div></div><h1>{{ settings.shop_name }}</h1><div class="splash-credit">{% if settings.developer_photo %}<img src="{{ image_src(settings.developer_photo) }}" alt="{{ settings.developer_name }}">{% endif %}<p>Developed by <b>{{ settings.developer_name }}</b></p></div><div class="loader"><i></i></div></div>
 
-<header class="hero"{% if settings.banner_image %} style="background-image:linear-gradient(125deg,rgba(7,91,50,.92),rgba(11,135,73,.88)),url('{{ url_for('static',filename='uploads/'+settings.banner_image) }}');background-size:cover;background-position:center"{% endif %}>
+<header class="hero"{% if settings.banner_image %} style="background-image:linear-gradient(125deg,rgba(7,91,50,.92),rgba(11,135,73,.88)),url('{{ image_src(settings.banner_image) }}');background-size:cover;background-position:center"{% endif %}>
   <div class="hero-copy">
     <div class="hero-badge">⚡ {{ settings.delivery_minutes }} min local delivery</div>
     <h1>{{ settings.hero_title }}</h1>
@@ -40,7 +40,7 @@
 <section class="products" id="products">
 {% for product in products %}
 <article class="product-card" data-search="{{ product.name|lower }} {{ product.shop_name|lower }}" data-category="{{ product.category|lower }}">
-  <div class="image-wrap">{% if product.image_url %}<img class="product-image" src="{{ url_for('static', filename='uploads/' + product.image_url) }}" alt="{{ product.name }}" loading="lazy">{% else %}<div class="placeholder"><span>🛍️</span></div>{% endif %}<span class="category-tag">{{ product.category }}</span>{% if product.is_featured %}<span class="featured-tag">⭐ Featured</span>{% endif %}<span class="rating">★ 4.8</span></div>
+  <div class="image-wrap">{% if product.image_url %}<img class="product-image" src="{{ image_src(product.image_url) }}" alt="{{ product.name }}" loading="lazy">{% else %}<div class="placeholder"><span>🛍️</span></div>{% endif %}<span class="category-tag">{{ product.category }}</span>{% if product.is_featured %}<span class="featured-tag">⭐ Featured</span>{% endif %}<span class="rating">★ 4.8</span></div>
   <div class="product-info"><p class="shop">{{ product.shop_name }}</p><h3>{{ product.name }}</h3><p class="delivery-note">⏱ {{ settings.delivery_minutes }} min delivery</p><div class="product-bottom"><div><span class="price">₹{{ product.price }}</span><small class="unit">Stock {{ product.stock }}</small></div><div class="stepper"><button type="button" class="minus" aria-label="Ghatao">−</button><input class="quantity" type="number" name="quantity_{{ product.id }}" value="0" min="0" max="{{ [20, product.stock]|min }}" data-max="{{ [20, product.stock]|min }}" data-price="{{ product.price }}" readonly><button type="button" class="plus" aria-label="Badhao">+</button></div></div></div>
 </article>{% endfor %}
 </section>
