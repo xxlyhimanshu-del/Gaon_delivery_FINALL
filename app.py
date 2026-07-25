@@ -1,4 +1,3 @@
-import base64
 import json
 import os
 import sqlite3
@@ -10,17 +9,8 @@ from uuid import uuid4
 from flask import Flask, flash, jsonify, redirect, render_template, request, send_file, session, url_for
 from werkzeug.utils import secure_filename
 
-try:
-    import psycopg2
-    from psycopg2.extras import RealDictCursor
-except ImportError:
-    psycopg2 = None
-    RealDictCursor = None
-
 BASE_DIR = Path(__file__).resolve().parent
-DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
 DATABASE = Path(os.environ.get("DATABASE_PATH", BASE_DIR / "gaon_delivery.db"))
-USE_POSTGRES = bool(DATABASE_URL)
 UPLOAD_FOLDER = BASE_DIR / "static" / "uploads"
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "webp"}
 
@@ -50,74 +40,31 @@ DEFAULT_SETTINGS = {
     "logo_image": "",
     "banner_image": "",
     "qr_image": "",
+    "developer_name": "Himanshu",
+    "developer_image": "",
     "cash_on_delivery": "1",
     "orders_enabled": "1",
-    "developer_name": "Himanshu",
-    "developer_photo": "",
 }
 
 
-class DatabaseConnection:
-    def __init__(self):
-        self.is_postgres = USE_POSTGRES
-        if self.is_postgres:
-            if psycopg2 is None:
-                raise RuntimeError("PostgreSQL driver missing. Run: pip install psycopg2-binary")
-            self.connection = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
-        else:
-            DATABASE.parent.mkdir(parents=True, exist_ok=True)
-            self.connection = sqlite3.connect(DATABASE, timeout=20)
-            self.connection.row_factory = sqlite3.Row
-            self.connection.execute("PRAGMA foreign_keys = ON")
-
-    def execute(self, query, params=()):
-        if self.is_postgres:
-            query = query.replace("?", "%s")
-            cursor = self.connection.cursor()
-            cursor.execute(query, params)
-            return cursor
-        return self.connection.execute(query, params)
-
-    def executemany(self, query, params):
-        if self.is_postgres:
-            query = query.replace("?", "%s")
-            cursor = self.connection.cursor()
-            cursor.executemany(query, params)
-            return cursor
-        return self.connection.executemany(query, params)
-
-    def commit(self):
-        self.connection.commit()
-
-    def rollback(self):
-        self.connection.rollback()
-
-    def close(self):
-        self.connection.close()
-
-
 def get_database():
-    return DatabaseConnection()
+    DATABASE.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(DATABASE, timeout=20)
+    connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA foreign_keys = ON")
+    return connection
 
 
-def upsert_setting(connection, key, value):
-    if connection.is_postgres:
-        connection.execute(
-            "INSERT INTO settings (key, value) VALUES (?, ?) "
-            "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
-            (key, value),
-        )
-    else:
-        connection.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
+def column_names(connection, table_name):
+    return {row["name"] for row in connection.execute(f"PRAGMA table_info({table_name})").fetchall()}
 
 
 def create_database():
     UPLOAD_FOLDER.mkdir(parents=True, exist_ok=True)
     connection = get_database()
-    id_type = "SERIAL PRIMARY KEY" if connection.is_postgres else "INTEGER PRIMARY KEY AUTOINCREMENT"
-    connection.execute(f"""
+    connection.execute("""
         CREATE TABLE IF NOT EXISTS products (
-            id {id_type},
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
             price INTEGER NOT NULL CHECK(price > 0),
             shop_name TEXT NOT NULL,
@@ -128,9 +75,20 @@ def create_database():
             is_featured INTEGER NOT NULL DEFAULT 0
         )
     """)
-    connection.execute(f"""
+    columns = column_names(connection, "products")
+    for name, definition in {
+        "image_url": "TEXT DEFAULT ''",
+        "is_available": "INTEGER NOT NULL DEFAULT 1",
+        "category": "TEXT NOT NULL DEFAULT 'Kirana'",
+        "stock": "INTEGER NOT NULL DEFAULT 100",
+        "is_featured": "INTEGER NOT NULL DEFAULT 0",
+    }.items():
+        if name not in columns:
+            connection.execute(f"ALTER TABLE products ADD COLUMN {name} {definition}")
+
+    connection.execute("""
         CREATE TABLE IF NOT EXISTS orders (
-            id {id_type},
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
             customer_name TEXT NOT NULL,
             phone TEXT NOT NULL,
             address TEXT NOT NULL,
@@ -142,47 +100,20 @@ def create_database():
             created_at TEXT NOT NULL
         )
     """)
+    order_columns = column_names(connection, "orders")
+    if "subtotal" not in order_columns:
+        connection.execute("ALTER TABLE orders ADD COLUMN subtotal INTEGER NOT NULL DEFAULT 0")
+    if "delivery_fee" not in order_columns:
+        connection.execute("ALTER TABLE orders ADD COLUMN delivery_fee INTEGER NOT NULL DEFAULT 0")
+
     connection.execute("""
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL DEFAULT ''
         )
     """)
-
-    # Upgrade older SQLite databases without deleting existing products/orders.
-    # CREATE TABLE IF NOT EXISTS does not add newly introduced columns, so we
-    # add them safely one by one during every startup.
-    if not connection.is_postgres:
-        product_columns = {row[1] for row in connection.execute("PRAGMA table_info(products)").fetchall()}
-        product_migrations = {
-            "category": "TEXT NOT NULL DEFAULT 'Kirana'",
-            "is_available": "INTEGER NOT NULL DEFAULT 1",
-            "stock": "INTEGER NOT NULL DEFAULT 100",
-            "is_featured": "INTEGER NOT NULL DEFAULT 0",
-        }
-        for column, definition in product_migrations.items():
-            if column not in product_columns:
-                connection.execute(f"ALTER TABLE products ADD COLUMN {column} {definition}")
-
-        order_columns = {row[1] for row in connection.execute("PRAGMA table_info(orders)").fetchall()}
-        order_migrations = {
-            "subtotal": "INTEGER NOT NULL DEFAULT 0",
-            "delivery_fee": "INTEGER NOT NULL DEFAULT 0",
-        }
-        for column, definition in order_migrations.items():
-            if column not in order_columns:
-                connection.execute(f"ALTER TABLE orders ADD COLUMN {column} {definition}")
-
-        # Old orders only had total; preserve them by using total as subtotal.
-        connection.execute("UPDATE orders SET subtotal = total WHERE subtotal = 0 AND total > 0")
     for key, value in DEFAULT_SETTINGS.items():
-        if connection.is_postgres:
-            connection.execute(
-                "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO NOTHING",
-                (key, value),
-            )
-        else:
-            connection.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, value))
+        connection.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, value))
 
     count = connection.execute("SELECT COUNT(*) AS total FROM products").fetchone()["total"]
     if count == 0:
@@ -198,6 +129,7 @@ def create_database():
         )
     connection.commit()
     connection.close()
+
 
 def get_settings(connection=None):
     own = connection is None
@@ -227,21 +159,10 @@ def save_image(uploaded_file):
     extension = filename.rsplit(".", 1)[1].lower()
     if extension not in ALLOWED_EXTENSIONS:
         raise ValueError("Sirf PNG, JPG, JPEG ya WEBP photo upload karo.")
-    raw = uploaded_file.read()
-    if len(raw) > app.config["MAX_CONTENT_LENGTH"]:
-        raise ValueError("Photo 5 MB se chhoti rakho.")
-    mime = "image/jpeg" if extension in {"jpg", "jpeg"} else f"image/{extension}"
-    return f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}"
+    new_filename = f"{uuid4().hex}.{extension}"
+    uploaded_file.save(UPLOAD_FOLDER / new_filename)
+    return new_filename
 
-
-def image_src(value):
-    if not value:
-        return ""
-    if value.startswith("data:image/"):
-        return value
-    return url_for("static", filename="uploads/" + value)
-
-app.jinja_env.globals["image_src"] = image_src
 
 def delivery_fee_for(subtotal, settings):
     try:
@@ -318,19 +239,18 @@ def place_order():
 
     delivery_fee = delivery_fee_for(subtotal, settings)
     total = subtotal + delivery_fee
-    order_query = """
+    cursor = connection.execute("""
         INSERT INTO orders
         (customer_name, phone, address, items, subtotal, delivery_fee, total, status, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, 'Pending', ?)
-    """ + (" RETURNING id" if connection.is_postgres else "")
-    cursor = connection.execute(order_query, (
+    """, (
         customer_name, phone, address, json.dumps(selected_items, ensure_ascii=False),
         subtotal, delivery_fee, total, datetime.now().strftime("%d-%m-%Y %I:%M %p"),
     ))
     for quantity, product_id in stock_updates:
-        connection.execute(("UPDATE products SET stock = GREATEST(0, stock - ?) WHERE id = ?" if connection.is_postgres else "UPDATE products SET stock = MAX(0, stock - ?) WHERE id = ?"), (quantity, product_id))
+        connection.execute("UPDATE products SET stock = MAX(0, stock - ?) WHERE id = ?", (quantity, product_id))
     connection.commit()
-    order_id = cursor.fetchone()["id"] if connection.is_postgres else cursor.lastrowid
+    order_id = cursor.lastrowid
     connection.close()
     return render_template("success.html", order_id=order_id, subtotal=subtotal,
                            delivery_fee=delivery_fee, total=total, phone=phone, settings=settings)
@@ -494,6 +414,8 @@ def edit_product(product_id):
         if uploaded_file and uploaded_file.filename:
             try:
                 new_image = save_image(uploaded_file)
+                if image_filename:
+                    (UPLOAD_FOLDER / image_filename).unlink(missing_ok=True)
                 image_filename = new_image
             except ValueError as error:
                 connection.close(); flash(str(error), "error"); return redirect(request.url)
@@ -524,6 +446,9 @@ def delete_product(product_id):
     product = connection.execute("SELECT image_url FROM products WHERE id=?", (product_id,)).fetchone()
     connection.execute("DELETE FROM products WHERE id = ?", (product_id,))
     connection.commit(); connection.close()
+    if product and product["image_url"]:
+        try: (UPLOAD_FOLDER / product["image_url"]).unlink(missing_ok=True)
+        except OSError: pass
     flash("Product delete ho gaya.", "success")
     return redirect(url_for("admin_products"))
 
@@ -539,15 +464,19 @@ def admin_settings():
                     "upi_id", "support_phone", "announcement", "developer_name"]
         for key in editable:
             value = request.form.get(key, "").strip()[:500]
-            upsert_setting(connection, key, value)
+            connection.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
         for key in ["cash_on_delivery", "orders_enabled"]:
-            upsert_setting(connection, key, "1" if request.form.get(key) else "0")
-        for field, key in [("logo_image", "logo_image"), ("banner_image", "banner_image"), ("qr_image", "qr_image"), ("developer_photo", "developer_photo")]:
+            connection.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+                               (key, "1" if request.form.get(key) else "0"))
+        for field, key in [("logo_image", "logo_image"), ("banner_image", "banner_image"), ("qr_image", "qr_image"), ("developer_image", "developer_image")]:
             uploaded = request.files.get(field)
             if uploaded and uploaded.filename:
                 try:
                     new_name = save_image(uploaded)
-                    upsert_setting(connection, key, new_name)
+                    old = settings.get(key, "")
+                    if old:
+                        (UPLOAD_FOLDER / old).unlink(missing_ok=True)
+                    connection.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, new_name))
                 except ValueError as error:
                     connection.close(); flash(str(error), "error"); return redirect(request.url)
         connection.commit(); connection.close()
@@ -560,19 +489,7 @@ def admin_settings():
 @app.route("/admin/backup")
 @admin_required
 def download_backup():
-    connection = get_database()
-    backup = {
-        "exported_at": datetime.now().isoformat(),
-        "products": [dict(row) for row in connection.execute("SELECT * FROM products ORDER BY id").fetchall()],
-        "orders": [dict(row) for row in connection.execute("SELECT * FROM orders ORDER BY id").fetchall()],
-        "settings": [dict(row) for row in connection.execute("SELECT * FROM settings ORDER BY key").fetchall()],
-    }
-    connection.close()
-    payload = json.dumps(backup, ensure_ascii=False, indent=2).encode("utf-8")
-    from io import BytesIO
-    return send_file(BytesIO(payload), as_attachment=True,
-                     download_name=f"gaon-delivery-backup-{datetime.now():%Y-%m-%d}.json",
-                     mimetype="application/json")
+    return send_file(DATABASE, as_attachment=True, download_name=f"gaon-delivery-backup-{datetime.now():%Y-%m-%d}.db")
 
 
 create_database()

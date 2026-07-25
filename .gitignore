@@ -4,10 +4,3 @@ __pycache__/
 .venv/
 static/uploads/*
 !static/uploads/.gitkeep
-
-# Local/runtime data
-*.db
-*.sqlite
-*.sqlite3
-__pycache__/
-*.pyc
